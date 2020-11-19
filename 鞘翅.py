@@ -49,7 +49,8 @@ critic = nn.Sequential(nn.Linear(n2_in, n2_h1),
    nn.ReLU(),
    nn.Linear(n2_h1, n2_h2),
    nn.ReLU(),
-   nn.Linear(n2_h2, n2_out))
+   nn.Linear(n2_h2, n2_out),
+   nn.Sigmoid())
 
 if os.path.exists("critic.pkl"):
     critic.load_state_dict(t.load("critic.pkl"))
@@ -99,7 +100,7 @@ class MyLoss0(nn.Module):
 
     def forward(self, output,Y,X):
         # 不要忘记返回scalar
-        return X.tolist()[0]/4000*X.tolist()[0]/4000*t.mean(t.pow((output - Y), 2))
+        return t.mean(t.pow((output - Y), 2))
 
 class MyLoss(nn.Module):
     # 不要忘记继承Module
@@ -108,7 +109,7 @@ class MyLoss(nn.Module):
 
     def forward(self, output,X):
         # 不要忘记返回scalar
-        return X.tolist()[0]/4000*X.tolist()[0]/4000*t.mean(-output)
+        return t.mean(-output)
 net = model()
 
 
@@ -117,7 +118,7 @@ criterion1 = MyLoss0()
 criterion2 = MyLoss()
 # Construct the optimizer (Stochastic Gradient Descent in this case)
 optimizer1 = t.optim.Adam(critic.parameters(), lr = 0.01, weight_decay=0.01)
-optimizer2 = t.optim.Adam(net.parameters(), lr = 0.001, weight_decay=0.1)
+optimizer2 = t.optim.Adam(net.parameters(), lr = 0.01, weight_decay=0.1)
 
 sa = []
 r = []
@@ -126,9 +127,9 @@ IniInputlist = []
 alphalist = []
 Xlist = []
 R = []
-k=8
+k=10
 BestLine = 0
-for i_episode in range(100):
+for i_episode in range(2000):
     del(Hlist)
     del(alphalist)
     del(Xlist)
@@ -179,7 +180,7 @@ for i_episode in range(100):
     
     print("行进",X.tolist()[0],"高度",H_,"最远",BestLine)#,'epoch ',M)
     for oner in r:
-        oner[0] = X - oner[0]
+        oner[0] = (X - oner[0])/7000
     # print(X)
     R.append(X.tolist()[0]/H_)
     sa = t.tensor(sa)
@@ -189,11 +190,11 @@ for i_episode in range(100):
 
     if BestLine<X:
         BestLine = X
-        M=10
+        M=50
     else:
         M=0
-    if X + 300 > BestLine:
-        M = 10
+    if X + 100 > BestLine:
+        M = 20
     loss1 = t.tensor(0)
     loss2 = t.tensor(0)
     for epoch in range(M):
@@ -222,17 +223,20 @@ for i_episode in range(100):
         loss2.backward()
 
         # Update the parameters
-        optimizer2.step()
-        if -1*loss2/X*4000/X*4000>X*1.5+300:
-            k*=1.5
-        elif -1*loss2/X*4000/X*4000<=(X-300)*0.8:
-            k/=2
-        print(k,' ',end="")
-        k = int(k)
-        if k<2:
-            k=2    
-    print()
-    print('i_episode: ',i_episode, ' loss1: ', loss1.tolist(),' loss2: ', loss2.tolist())
+        # optimizer2.step()
+        # if -1*loss2/X*4000/X*4000>X*2+300:
+        #     k*=1.5
+        # elif -1*loss2/X*4000/X*4000<=(X-300):
+        #     k/=2
+        # print(k,' ',end="")
+        # k = int(k)
+        # if k<2:
+        #     k=2    
+        # if k>500:
+            # k=500
+        # print("训练中")
+    if M>0:
+        print('i_episode: ',i_episode, ' loss1: ', loss1.tolist(),' loss2: ', loss2.tolist())
     if i_episode%20==0:
         t.save(actor.state_dict(), "actor.pkl")
         t.save(critic.state_dict(), "critic.pkl")
