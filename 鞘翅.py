@@ -30,28 +30,73 @@ import torch.nn as nn
 
 import os 
 
-# Defining input size, hidden layer size, output size and batch size respectively
-n1_in, n1_h1, n1_h2 , n1_out= 3, 20, 20, 1
 
-actor = nn.Sequential(nn.Linear(n1_in, n1_h1),
-   nn.Sigmoid(),
+MaxModelX = 0
+fo = open("MaxModelX", "r")
+MaxModelX = fo.readline()
+MaxModelX = int(0 if MaxModelX=="" else MaxModelX)
+fo.close()
+# Defining input size, hidden layer size, output size and batch size respectively
+n1_in, n1_h1, n1_h2 , n1_out= 3, 20, 20, 2
+
+actor = nn.Sequential(
+   nn.Linear(n1_in, n1_h1),
+   nn.ELU(),
    nn.Linear(n1_h1, n1_h2),
-   nn.Sigmoid(),
+   nn.ELU(),
    nn.Linear(n1_h2, n1_out),
    nn.Tanh())
-if os.path.exists("actor.pkl"):
-    actor.load_state_dict(t.load("actor.pkl"))
 
-n2_in, n2_h1, n2_h2 , n2_out = 4, 20, 20, 1
-critic = nn.Sequential(nn.Linear(n2_in, n2_h1),
-   nn.Sigmoid(),
+class Actor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        self.l = nn.Sequential(nn.Linear(n1_in, n1_h1),
+        nn.ELU(),
+        nn.Linear(n1_h1, n1_h2),
+        nn.ELU(),
+        nn.Linear(n1_h2, n1_out)) 
+        self.t = nn.Tanh()
+        self.s = nn.Sigmoid()
+    
+    def forward(self,x):
+        o1 = self.l(x)
+        # print(o1[:,0],o1[:,1])
+        mean = self.t(o1[:,0])
+        std = self.s(o1[:,1])
+        return mean,std
+
+actor = Actor()
+
+if MaxModelX == 0:
+    前缀 = ""
+else:
+    前缀 = str(MaxModelX)
+print(前缀)
+if os.path.exists(前缀+"actor.pkl"):
+    actor.load_state_dict(t.load(前缀+"actor.pkl"))
+
+n2_in, n2_h1, n2_h2 , n2_out = 5, 20, 20, 1
+critic = nn.Sequential(
+   nn.Linear(n2_in, n2_h1),
+   nn.ELU(),
    nn.Linear(n2_h1, n2_h2),
-   nn.Sigmoid(),
+   nn.ELU(),
    nn.Linear(n2_h2, n2_out),
    nn.Sigmoid())
 
-if os.path.exists("critic.pkl"):
-    critic.load_state_dict(t.load("critic.pkl"))
+class Critic(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.l = critic
+        self.distence = t.tensor(6000)
+        self.distence.requires_grad = False
+    def forward(self,x):
+        o = self.l(x)
+        return self.distence*o
+critic = Critic()
+if os.path.exists(前缀+"critic.pkl"):
+    critic.load_state_dict(t.load(前缀+"critic.pkl"))
 
 Lstm = nn.LSTM(4,10,3,dropout=0.5)
 Linear = nn.Linear(10,1)
@@ -87,8 +132,8 @@ class model(nn.Module):
         self.critic = critic
 
     def forward(self, x):
-        output = self.actor(x)
-        output = self.critic(t.cat((output,x),1))
+        mean,std = self.actor(x)
+        output = self.critic(t.cat((mean.view(mean.shape[0],1),std.view(std.shape[0],1),x),1))
         return output
 
 class MyLoss0(nn.Module):
@@ -98,7 +143,7 @@ class MyLoss0(nn.Module):
 
     def forward(self, output,Y):
         # 不要忘记返回scalar
-        return t.mean(t.pow((output - Y), 2))
+        return t.sum(t.pow((output - Y), 2))
 
 class MyLoss(nn.Module):
     # 不要忘记继承Module
@@ -107,7 +152,7 @@ class MyLoss(nn.Module):
 
     def forward(self, output):
         # 不要忘记返回scalar
-        return t.mean(-1.0*output)
+        return t.sum(-1.0*output)
 net = model()
 
 
@@ -116,7 +161,8 @@ criterion1 = MyLoss0()
 criterion2 = MyLoss()
 # Construct the optimizer (Stochastic Gradient Descent in this case)
 optimizer1 = t.optim.AdamW(critic.parameters(), lr = 0.01, weight_decay=0.001)
-optimizer2 = t.optim.AdamW(net.parameters(), lr = 0.01, weight_decay=0.001)
+optimizer2 = t.optim.AdamW(net.parameters(), lr = 0.1, weight_decay=0.001)
+
 
 sa = []
 r = []
@@ -142,7 +188,8 @@ for i_episode in range(1000):
     alphalist = []
     Xlist = []
     IniInputlist = []
-    for i in range(100):
+    ModelX = 0
+    for i in range(20):
         # H = t.rand(1)*50+280
         H = t.tensor([300.0])
         H_ = H.tolist()[0]
@@ -152,15 +199,23 @@ for i_episode in range(1000):
         vy = t.tensor([0.0])
         while H>0:
             IniInpu = t.cat((H,vx,vy),0)
-            action = 3.1415/2*actor(IniInpu)
+            mean, std = actor(IniInpu.reshape(1,3))
+            action = t.normal(mean,std)
+            action = 3.1415/2*action
 
             IniInputlist.append(IniInpu.tolist())
             alpha = action
             
-            if  t.rand(1)>0.95:
-                alpha = alpha*(1.4)
+            # if  t.rand(1)>0.95:
+            #     if t.rand(1)>0.5:
+            #         alpha = alpha*(1.1)
+            #     else:
+            #         alpha = alpha*(-1.1)
             if t.isnan(alpha[0]) or alpha>3.1415/2 or alpha<-3.1415/2:
-                alpha = 0
+                if alpha >= 0:
+                    alpha = t.tensor([3.1415/2])
+                if alpha < 0:
+                    alpha = t.tensor([-3.1415/2])
 
             vx, vy = tick(alpha,vx,vy)
             # print(alpha,end="")
@@ -171,7 +226,7 @@ for i_episode in range(1000):
             Hlist.append(H.tolist()[0])
             alphalist.append(alpha.tolist()[0])
             Xlist = Xlist+X.tolist()
-            action = [alpha.tolist()[0]/3.1415*2]
+            action = [mean.tolist()[0],std.tolist()[0]]
             action= action + IniInpu.tolist()
             # print(action)
             sa.append(action)
@@ -180,10 +235,10 @@ for i_episode in range(1000):
         # IniInpu_ =  t.tensor(sa)
         # M = Controller_(IniInpu_)
         # M = int(M.tolist()[M.shape[0]-1][0][0])*30+1
-        
+        ModelX+=X.tolist()[0]
         print("行进",X.tolist()[0],"高度",H_,"最远",BestLine,"i",i)#,'epoch ',M)
         for oner in r:
-            oner[0] = (X - oner[0])/7000
+            oner[0] = (X - oner[0])/4000
         # print(X)
         R.append(X.tolist()[0]/H_)
     sa_ = t.tensor(sa).to(device)
@@ -200,6 +255,13 @@ for i_episode in range(1000):
     # if X + 100 > BestLine:
     #     M = 200
     
+    plt.plot(Xlist,Hlist)
+    plt.savefig("飞行曲线episode"+str(i_episode))
+    plt.cla()
+    plt.plot(Xlist,alphalist)
+    plt.savefig("角度曲线episode"+str(i_episode))
+    plt.cla()
+
     loss1 = t.tensor(0)
     loss2 = t.tensor(0)
     actor.cuda()
@@ -218,6 +280,14 @@ for i_episode in range(1000):
     shuffle=True,
     num_workers = 0,  #采用两个进程来提取
 )
+    ModelX=ModelX/20        
+    if MaxModelX<ModelX:
+        MaxModelX=ModelX
+        fo = open("MaxModelX", "w")
+        fo.writelines(str(int(MaxModelX)))
+        print("写入"+str(int(MaxModelX))+"成功")
+        fo.close()
+    print("当前平均距离",ModelX,"最大平均距离",MaxModelX)
     for epoch in range(10):
         for step , (batch_x,batch_y) in enumerate(criticloader):
             y_pred = critic(batch_x)
@@ -225,24 +295,24 @@ for i_episode in range(1000):
             optimizer1.zero_grad()
             loss1.backward()
             optimizer1.step()
-            if epoch%2==0 and step%200==0:
+            if epoch%2==0 and step%1000==0:
                 print('i_episode: ',i_episode, 'epoch',epoch,'step',step,' loss1: ', loss1.tolist())
     for epoch in range(10):
+        # epochloss2 = 0
         for step , (batch_x,batch_y) in enumerate(netloader):
             # Forward pass: Compute predicted y by passing x to the model
             y_pred = net(batch_x)
             # Compute and print loss
             loss2 = criterion2(y_pred)
+            # epochloss2 += loss2
             # if epoch%5==0:
             # print('i_episode: ',i_episode, 'epoch: ', epoch,' loss1: ', loss1.tolist(),' loss2: ', loss2.tolist())
             # Zero gradients, perform a backward pass, and update the weights.
             optimizer2.zero_grad()
             # perform a backward pass (backpropagation)
             loss2.backward()
-        # if epoch % 200==0:
-        #     for name, parms in net.named_parameters():	
-        #         print('-->name:', name, '-->grad_requirs:',parms.requires_grad, \
-        #     ' -->grad_value:',parms.grad)
+            # nn.utils.clip_grad_value_(net.linear.weight, clip_value=1.1)
+            
         # Update the parameters
         # optimizer2.step()
         # if -1*loss2/X*4000/X*4000>X*2+300:
@@ -256,20 +326,18 @@ for i_episode in range(1000):
         # if k>500:
             # k=500
         # print("训练中")
-            if epoch%2==0 and step%200==0:
+            if epoch%2==0 and step%1000==0:
                 print('i_episode: ',i_episode, 'epoch',epoch,'step',step,' loss2: ', loss2.tolist())
     # if i_episode%20==0:
-    t.save(actor.state_dict(), "actor.pkl")
-    t.save(critic.state_dict(), "critic.pkl")
+    # for name, parms in net.named_parameters():	
+    #     print('-->name:', name, parms,'-->grad_requirs:',parms.requires_grad, \
+    #         ' -->grad_value:',parms.grad)
+    
+    t.save(actor.state_dict(), str(int(ModelX))+"actor.pkl")
+    t.save(critic.state_dict(), str(int(ModelX))+"critic.pkl")
     actor.cpu()
     net.cpu()
     
-    plt.plot(Xlist,Hlist)
-    plt.savefig("飞行曲线episode"+str(i_episode))
-    plt.cla()
-    plt.plot(Xlist,alphalist)
-    plt.savefig("角度曲线episode"+str(i_episode))
-    plt.cla()
         # t.save(Controller_.state_dict(), "controller.pkl")
 
 
